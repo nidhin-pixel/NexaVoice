@@ -2,6 +2,7 @@ import type { AgoraConfig } from '@/types/conversation';
 
 const AGORA_APP_ID = import.meta.env.VITE_AGORA_APP_ID as string | undefined;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const AGORA_API_BASE =
   (import.meta.env.VITE_AGORA_API_BASE as string | undefined) ??
   (SUPABASE_URL ? `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1` : '');
@@ -26,6 +27,15 @@ export function isAgoraConfigured(): boolean {
   return getAgoraRuntimeConfig().hasCredentials;
 }
 
+export function getSupabaseFunctionHeaders(): Record<string, string> {
+  const anonKey = (SUPABASE_ANON_KEY ?? '').trim();
+  return {
+    'Content-Type': 'application/json',
+    apikey: anonKey,
+    Authorization: `Bearer ${anonKey}`,
+  };
+}
+
 /**
  * Fetches a real Agora RTC token + channel assignment from our server endpoint.
  * In production this calls our Edge Function which mints a token server-side.
@@ -40,7 +50,7 @@ export async function fetchAgoraToken(channelName: string, uid: number): Promise
   try {
     const res = await fetch(`${cfg.apiBase}/agora-token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getSupabaseFunctionHeaders(),
       body: JSON.stringify({ action: 'token', channelName, uid }),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? 'Unable to mint Agora token');

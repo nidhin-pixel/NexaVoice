@@ -20,7 +20,7 @@ export async function createAgentClient(channelName: string, browserUid: number)
 }
 
 async function createRealAgentClient(channelName: string, browserUid: number): Promise<IAgoraAgentClient> {
-  const { getAgoraRuntimeConfig } = await import('@/lib/agora/config');
+  const { getAgoraRuntimeConfig, getSupabaseFunctionHeaders } = await import('@/lib/agora/config');
   const cfg = getAgoraRuntimeConfig();
   let handlers: AgentEventHandlers = {};
   let started = false;
@@ -29,7 +29,7 @@ async function createRealAgentClient(channelName: string, browserUid: number): P
   async function provisionAgent() {
     const response = await fetch(`${cfg.apiBase}/agora-token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getSupabaseFunctionHeaders(),
         body: JSON.stringify({ action: 'start', channelName, browserUid }),
       });
     if (!response.ok) {
@@ -52,7 +52,7 @@ async function createRealAgentClient(channelName: string, browserUid: number): P
       try {
         const response = await fetch(`${cfg.apiBase}/agora-token`, {
            method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
+           headers: getSupabaseFunctionHeaders(),
            body: JSON.stringify({ action: 'stop', channelName, agentId }),
          });
          if (!response.ok) throw new Error('Unable to stop Agora Conversational AI agent');
