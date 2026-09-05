@@ -30,8 +30,14 @@ import {
 } from '@/lib/conversation/simulation';
 
 let entryId = 0;
+let rtcUidCounter = 0;
 function genId(): string {
   return `msg-${++entryId}-${Date.now()}`;
+}
+
+function generateBrowserRtcUid(): number {
+  rtcUidCounter = (rtcUidCounter + 1) % 900000;
+  return 100000 + ((Date.now() + rtcUidCounter) % 900000);
 }
 
 export interface UseVoiceConversationReturn {
@@ -182,7 +188,8 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
 
       const channelName = `nexavoice-${Date.now()}`;
       channelRef.current = channelName;
-      const agent = await createAgentClient(channelName);
+      const browserUid = generateBrowserRtcUid();
+      const agent = await createAgentClient(channelName, browserUid);
       agentRef.current = agent;
 
       agent.on({
@@ -215,7 +222,7 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
         },
       });
 
-      const token = await fetchAgoraToken(channelName);
+      const token = await fetchAgoraToken(channelName, browserUid);
       if (!token) throw new Error('Agora is not configured');
       await rtc.join(token);
 

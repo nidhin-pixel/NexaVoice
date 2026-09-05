@@ -9,6 +9,8 @@ const corsHeaders = {
 type RequestBody = {
   action: "token" | "start" | "stop";
   channelName: string;
+  uid?: number;
+  browserUid?: number;
   agentId?: string;
 };
 
@@ -41,34 +43,42 @@ Deno.serve(async (req) => {
   try {
     const body = (await req.json()) as RequestBody;
     const channelName = body.channelName?.trim();
+    const browserUid = body.uid ?? body.browserUid;
     const appId = Deno.env.get("AGORA_APP_ID");
     const certificate = Deno.env.get("AGORA_APP_CERTIFICATE");
     if (!channelName || !appId || !certificate) {
       return json({ error: "Agora app credentials and channelName are required" }, 503);
     }
+    if (body.action !== "stop" && (!Number.isInteger(browserUid) || browserUid <= 0)) {
+      return json({ error: "A non-zero browser UID is required" }, 400);
+    }
 
     const configuredUid = Deno.env.get("AGORA_AGENT_UID");
-    const uid = configuredUid
-      ? Number(configuredUid)
-      : Math.floor(Math.random() * 900000) + 100000;
+    const configuredAgentUid = configuredUid ? Number(configuredUid) : null;
+    if (configuredAgentUid !== null && (!Number.isInteger(configuredAgentUid) || configuredAgentUid <= 0)) {
+      return json({ error: "AGORA_AGENT_UID must be a positive integer" }, 503);
+    }
+    const uid = configuredAgentUid ??
+      100000 + Array.from(channelName).reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) % 900000, 0);
+    const agentUid = uid === browserUid ? (uid % 899999) + 1 : uid;
     const expiry = Math.floor(Date.now() / 1000) + 3600;
     const userToken = RtcTokenBuilder.buildTokenWithUid(
       appId,
       certificate,
       channelName,
-      0,
+      browserUid,
       RtcRole.PUBLISHER,
       expiry,
     );
 
-    if (body.action === "token") return json({ appId, channelName, token: userToken, uid: 0 });
+    if (body.action === "token") return json({ appId, channelName, token: userToken, uid: browserUid });
 
     if (body.action === "start") {
       const agentToken = RtcTokenBuilder.buildTokenWithUid(
         appId,
         certificate,
         channelName,
-        uid,
+        agentUid,
         RtcRole.PUBLISHER,
         expiry,
       );
@@ -82,8 +92,8 @@ Deno.serve(async (req) => {
           properties: {
             channel: channelName,
             token: agentToken,
-            agent_rtc_uid: uid,
-            remote_rtc_uids: [0],
+            agent_rtc_uid: agentUid,
+            remote_rtc_uids: [browserUid],
             enable_string_uid: false,
           },
         }),

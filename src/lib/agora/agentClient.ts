@@ -13,13 +13,13 @@ export interface IAgoraAgentClient {
  * present, or a stub only when Agora is not configured. The UI only depends on
  * this interface.
  */
-export async function createAgentClient(channelName: string): Promise<IAgoraAgentClient> {
+export async function createAgentClient(channelName: string, browserUid: number): Promise<IAgoraAgentClient> {
   const { isAgoraConfigured } = await import('@/lib/agora/config');
-  if (isAgoraConfigured()) return createRealAgentClient(channelName);
+  if (isAgoraConfigured()) return createRealAgentClient(channelName, browserUid);
   return createStubAgentClient(channelName);
 }
 
-async function createRealAgentClient(channelName: string): Promise<IAgoraAgentClient> {
+async function createRealAgentClient(channelName: string, browserUid: number): Promise<IAgoraAgentClient> {
   const { getAgoraRuntimeConfig } = await import('@/lib/agora/config');
   const cfg = getAgoraRuntimeConfig();
   let handlers: AgentEventHandlers = {};
@@ -30,7 +30,7 @@ async function createRealAgentClient(channelName: string): Promise<IAgoraAgentCl
     const response = await fetch(`${cfg.apiBase}/agora-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start', channelName }),
+        body: JSON.stringify({ action: 'start', channelName, browserUid }),
       });
     if (!response.ok) {
       const body = await response.json().catch(() => null);

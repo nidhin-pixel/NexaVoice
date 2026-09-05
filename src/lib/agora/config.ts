@@ -32,15 +32,16 @@ export function isAgoraConfigured(): boolean {
  * A null result is only returned when Agora is not configured. Once configured,
  * API errors are surfaced so a production deployment never silently simulates.
  */
-export async function fetchAgoraToken(channelName: string): Promise<AgoraConfig | null> {
+export async function fetchAgoraToken(channelName: string, uid: number): Promise<AgoraConfig | null> {
   const cfg = getAgoraRuntimeConfig();
   if (!cfg.hasCredentials) return null;
+  if (!Number.isInteger(uid) || uid <= 0) throw new Error('A non-zero browser Agora UID is required');
 
   try {
     const res = await fetch(`${cfg.apiBase}/agora-token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'token', channelName }),
+      body: JSON.stringify({ action: 'token', channelName, uid }),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? 'Unable to mint Agora token');
     const data = (await res.json()) as Partial<AgoraConfig>;
@@ -49,7 +50,7 @@ export async function fetchAgoraToken(channelName: string): Promise<AgoraConfig 
       appId: data.appId,
       channelName: data.channelName,
       token: data.token,
-      uid: data.uid ?? 0,
+      uid: data.uid ?? uid,
     };
   } catch (error) {
     throw error instanceof Error ? error : new Error('Unable to mint Agora token');
