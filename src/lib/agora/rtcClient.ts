@@ -52,6 +52,7 @@ async function createRealRtcClient(): Promise<IAgoraRtcClient> {
   let muted = false;
   let handlers: RtcEventHandlers = {};
   let streamChannel: { sendMessage: (data: string) => void } | null = null;
+  const streamChunks = new Map<string, { total: number; parts: Map<number, string> }>();
 
   client.on('user-published', (user: IAgoraRTCRemoteUser, mediaType: 'audio' | 'video') => {
     handlers.onUserPublished?.(Number(user.uid), mediaType);
@@ -92,7 +93,8 @@ async function createRealRtcClient(): Promise<IAgoraRtcClient> {
         };
         const streamId = sdk.createDataStream?.({ reliable: true, ordered: true });
         sdk.on('stream-message', (uid: number, payload: Uint8Array) => {
-          handlers.onStreamMessage?.(uid, new TextDecoder().decode(payload));
+          const decoded = decodeAgoraStreamPayload(new TextDecoder().decode(payload), streamChunks);
+          if (decoded) handlers.onStreamMessage?.(uid, decoded);
         });
         if (typeof streamId === 'number') {
           streamChannel = {
@@ -100,6 +102,41 @@ async function createRealRtcClient(): Promise<IAgoraRtcClient> {
               void sdk.sendStreamMessage?.(streamId, new TextEncoder().encode(data));
             },
           };
+        }
+
+        function decodeAgoraStreamPayload(
+          payload: string,
+          chunks: Map<string, { total: number; parts: Map<number, string> }>,
+        ): string | null {
+          const match = payload.match(/^([^|]+)\|(\d+)\|(\d+)\|([\s\S]*)$/);
+          if (!match) return payload;
+
+          const [, messageId, indexText, totalText, encoded] = match;
+          const index = Number(indexText);
+          const total = Number(totalText);
+          if (!Number.isInteger(index) || !Number.isInteger(total) || total < 1 || index < 1 || index > total) {
+            return null;
+          }
+
+          const current = chunks.get(messageId) ?? { total, parts: new Map<number, string>() };
+          if (current.total !== total) {
+            current.total = total;
+            current.parts.clear();
+          }
+          current.parts.set(index, encoded);
+          chunks.set(messageId, current);
+          if (current.parts.size !== total) return null;
+
+          const joined = Array.from({ length: total }, (_, partIndex) => current.parts.get(partIndex + 1) ?? '').join('');
+          chunks.delete(messageId);
+
+          try {
+            const binary = atob(joined);
+            const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+            return new TextDecoder().decode(bytes);
+          } catch {
+            return null;
+          }
         }
       } catch {
         // streaming messages optional

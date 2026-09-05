@@ -1,5 +1,5 @@
 import type { ProductPlan, ProductPlanId } from '@/data/products';
-import { PRODUCT_PLANS, getPlanById } from '@/data/products';
+import { getPlanById } from '@/data/products';
 import type {
   InterestLevel,
   LeadStatus,
@@ -26,7 +26,7 @@ const TEAM_SIZE_PATTERNS: RegExp[] = [
 
 const COMPANY_PATTERNS: RegExp[] = [
   /(?:company|org(?:anization)?|business|firm|startup|agency|studio)\s*(?:is\s*(?:called|named)?|name(?:d| is)?)\s*['"]?([A-Z][\w&.\- ]{1,40})['"]?/i,
-  /(?:i(?:'m| am)\s*(?:from|with|at)\s+)([A-Z][\w&.\- ]{1,40})/i,
+  /(?:i(?:'m| am)\s*(?:from|with|at)\s+|i\s+work\s+at\s+)([A-Z][\w&.\- ]{1,40})/i,
   /(?:we(?:'re| are)\s+)([A-Z][\w&.\- ]{1,40})/i,
   /(?:call(?:ed| name)?(?:d| is)?)\s*['"]?([A-Z][\w&.\- ]{1,40})['"]?/i,
 ];
@@ -45,6 +45,7 @@ const USE_CASE_KEYWORDS: { regex: RegExp; label: string }[] = [
   { regex: /demo|present/i, label: 'Product demos' },
   { regex: /upsell|cross\s*sell|renew/i, label: 'Account expansion' },
   { regex: /sdr|sales\s*dev/i, label: 'SDR automation' },
+  { regex: /sales|sell|selling|prospect|pipeline|revenue/i, label: 'Sales automation' },
 ];
 
 const REQUIREMENT_KEYWORDS: { regex: RegExp; label: string }[] = [

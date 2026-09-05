@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { ConversationSummary } from '@/types/conversation';
 import { getPlanById, formatPrice } from '@/data/products';
+import { LeadHistoryPanel } from '@/components/workspace/LeadHistoryPanel';
 
 interface PostCallSummaryProps {
   summary: ConversationSummary;
@@ -187,6 +188,10 @@ export function PostCallSummary({ summary, onNewConversation }: PostCallSummaryP
         <div className="card mt-6 p-6 animate-slide-up" style={{ animationDelay: '400ms' }}>
           <h2 className="mb-3 text-sm font-semibold text-white">Conversation Overview</h2>
           <p className="text-sm leading-relaxed text-ink-300">{summary.summaryText}</p>
+        </div>
+
+        <div className="mt-6 animate-slide-up" style={{ animationDelay: '500ms' }}>
+          <LeadHistoryPanel />
         </div>
 
         {/* Actions */}

@@ -85,21 +85,29 @@ Deno.serve(async (req) => {
       const response = await agoraRequest(`/api/conversational-ai-agent/v2/projects/${appId}/join`, {
         method: "POST",
         body: JSON.stringify({
-          name: `${Deno.env.get("AGORA_AGENT_NAME") ?? "nexavoice-sales-agent"}-${Date.now()}`,
-          ...(Deno.env.get("AGORA_PIPELINE_ID")
-            ? { pipeline_id: Deno.env.get("AGORA_PIPELINE_ID") }
-            : {}),
+          name: `${Deno.env.get("AGORA_AGENT_NAME") ?? "nexavoice"}-${Date.now()}`,
+          pipeline_id: Deno.env.get("AGORA_PIPELINE_ID"),
           properties: {
             channel: channelName,
             token: agentToken,
-            agent_rtc_uid: agentUid,
-            remote_rtc_uids: [browserUid],
-            enable_string_uid: false,
+            agent_rtc_uid: String(agentUid),
+            remote_rtc_uids: [String(browserUid)],
           },
         }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) return json({ error: result.message ?? "Agora agent start failed" }, response.status);
+      if (!response.ok) {
+        return json(
+          {
+            error: "Agora agent start failed",
+            agora_status: response.status,
+            agora_message: result.message,
+            agora_code: result.code,
+            agora_error_code: result.error_code,
+          },
+          response.status,
+        );
+      }
       return json({ agentId: result.agent_id ?? result.agentId });
     }
 

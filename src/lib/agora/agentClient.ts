@@ -13,13 +13,21 @@ export interface IAgoraAgentClient {
  * present, or a stub only when Agora is not configured. The UI only depends on
  * this interface.
  */
-export async function createAgentClient(channelName: string, browserUid: number): Promise<IAgoraAgentClient> {
+export async function createAgentClient(
+  channelName: string,
+  browserUid: number,
+  sendStreamMessage?: (data: string) => void,
+): Promise<IAgoraAgentClient> {
   const { isAgoraConfigured } = await import('@/lib/agora/config');
-  if (isAgoraConfigured()) return createRealAgentClient(channelName, browserUid);
+  if (isAgoraConfigured()) return createRealAgentClient(channelName, browserUid, sendStreamMessage);
   return createStubAgentClient(channelName);
 }
 
-async function createRealAgentClient(channelName: string, browserUid: number): Promise<IAgoraAgentClient> {
+async function createRealAgentClient(
+  channelName: string,
+  browserUid: number,
+  sendStreamMessage?: (data: string) => void,
+): Promise<IAgoraAgentClient> {
   const { getAgoraRuntimeConfig, getSupabaseFunctionHeaders } = await import('@/lib/agora/config');
   const cfg = getAgoraRuntimeConfig();
   let handlers: AgentEventHandlers = {};
@@ -68,9 +76,7 @@ async function createRealAgentClient(channelName: string, browserUid: number): P
       handlers = {};
     },
     sendControl(message: AgentControlMessage) {
-      // Conversational AI control messages are sent over the RTC data stream.
-      // The hook forwards these through the RTC client when available.
-      void message;
+      sendStreamMessage?.(JSON.stringify(message));
     },
   };
 }

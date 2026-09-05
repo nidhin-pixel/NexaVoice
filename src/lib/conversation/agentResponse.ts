@@ -29,7 +29,7 @@ export function detectPhase(text: string, prospect: ProspectInfo): ConversationP
   if (prospect.company && prospect.teamSize && prospect.useCase) {
     return 'recommendation';
   }
-  if (!prospect.company || !prospect.teamSize || !prospect.useCase) {
+  if (!prospect.contactName || !prospect.company || !prospect.teamSize || !prospect.useCase) {
     return 'discovery';
   }
   return 'general';
@@ -84,30 +84,34 @@ function handleProductInquiry(_text: string, _prospect: ProspectInfo): string {
 
 function handleDiscovery(text: string, prospect: ProspectInfo): string {
   const missing: string[] = [];
+  if (!prospect.contactName) missing.push("your name");
   if (!prospect.company) missing.push("the name of your company");
-  if (!prospect.teamSize) missing.push("how large your team is");
   if (!prospect.useCase) missing.push("what you're primarily looking to use NexaVoice for");
+  if (!prospect.teamSize) missing.push("how large your team is");
 
   if (missing.length === 0) {
     return "Thanks for sharing that. Let me make sure I've got the full picture before recommending a plan. Could you tell me a bit about what's most important to you — integrations, multilingual support, analytics, or anything else?";
   }
 
   if (missing.length === 3) {
-    return "Welcome to NexaVoice! I'm your AI sales assistant, and I'm here to help you find the right plan. To get started, could you tell me a bit about your company and what you're looking to accomplish with a voice AI sales agent?";
+    return "Welcome to NexaVoice! I'm your AI sales assistant. To get started, may I have your name and the name of your company?";
   }
 
   if (missing.length <= 2) {
-    if (!prospect.company && !prospect.teamSize) {
-      return "Thanks for that. What's the name of your company, and roughly how large is your team?";
+    if (!prospect.contactName && !prospect.company) {
+      return "Thanks for that. May I have your name and the name of your company?";
+    }
+    if (!prospect.contactName) {
+      return "Thanks. May I have your name?";
     }
     if (!prospect.company) {
       return "Got it. And what's the name of your company?";
     }
-    if (!prospect.teamSize) {
-      return "Great. How many people would be on your team using NexaVoice?";
-    }
     if (!prospect.useCase) {
-      return "Perfect. And what's the main thing you're hoping to use NexaVoice for — lead generation, qualification, inbound handling, or something else?";
+      return "Perfect. What problem are you hoping NexaVoice will solve, and what would you like the agent to handle?";
+    }
+    if (!prospect.teamSize) {
+      return "Thanks. Roughly how many people would be on your team using NexaVoice?";
     }
   }
 
@@ -158,5 +162,5 @@ function summarizeProspect(prospect: ProspectInfo): string {
 }
 
 export function greetingMessage(): string {
-  return "Hi there, and welcome to NexaVoice! I'm your AI sales assistant. I can answer questions about our product, help you find the right plan, and get you set up. To start, could you tell me a bit about your company and what brings you here today?";
+  return "Hi there, and welcome to NexaVoice! I'm your AI sales assistant. May I start with your name and the name of your company?";
 }

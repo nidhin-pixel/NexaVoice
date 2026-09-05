@@ -51,7 +51,6 @@ export function TranscriptPanel({ transcript, isActive }: TranscriptPanelProps) 
 }
 
 function TranscriptBubble({ entry }: { entry: TranscriptEntry }) {
-  const isCustomer = entry.role === 'customer';
   const isAgent = entry.role === 'agent';
   const isSystem = entry.role === 'system';
 
@@ -84,7 +83,7 @@ function TranscriptBubble({ entry }: { entry: TranscriptEntry }) {
       <div className={`max-w-[80%] ${isAgent ? '' : 'text-right'}`}>
         <div className="mb-1 flex items-center gap-2">
           <span className="text-xs font-medium text-ink-400">
-            {isAgent ? 'AI Sales Agent' : 'Customer'}
+            {isAgent ? 'NexaVoice' : 'Customer'}
           </span>
           <span className="text-xs text-ink-600">
             {formatTime(entry.timestamp)}
