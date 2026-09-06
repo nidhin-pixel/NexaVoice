@@ -16,7 +16,7 @@ export type ConversationPhase =
 export function detectPhase(text: string, prospect: ProspectInfo): ConversationPhase {
   const lower = text.toLowerCase().trim();
 
-  if (/human|person|manager|supervisor|escalat|talk\s*to\s*(?:a\s*)?(?:real|human|person)/i.test(lower)) {
+  if (/(?:speak|talk)\s+(?:to|with)\s+(?:a\s+)?(?:human|person|real|representative|specialist|someone)|(?:connect|get|put)\s+(?:me\s+)?(?:to|through\s+to)\s+(?:a\s+)?(?:human|person|manager|supervisor)|\bescalat(?:e|ion|ing)\b|\b(?:human|real)\s+(?:expert|representative|person|agent|specialist)\b|(?:want|need)\s+(?:to\s+)?(?:speak|talk|connect)\s+(?:to|with)\s+(?:a\s+)?(?:human|person|manager)/i.test(lower)) {
     return 'escalation';
   }
   if (/price|pricing|cost|how\s*much|plan|per\s*month|budget/i.test(lower)) {

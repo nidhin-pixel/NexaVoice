@@ -45,7 +45,14 @@ export function LeadHistoryPanel() {
         <span className="text-xs text-ink-500">{leads.length} leads</span>
       </div>
       {error ? (
-        <p className="text-sm text-error-400">{error}</p>
+        <div className="rounded-lg border border-error-500/20 bg-error-500/5 p-3">
+          <p className="text-sm text-error-400">{error}</p>
+          {(error.includes('schema cache') || error.includes('does not exist') || error.includes('relation') || error.includes('table')) && (
+            <p className="mt-1 text-xs text-ink-500">
+              The leads table may not exist yet. Run the Supabase database migrations to set it up.
+            </p>
+          )}
+        </div>
       ) : leads.length === 0 ? (
         <p className="text-sm text-ink-500">No leads created yet.</p>
       ) : (

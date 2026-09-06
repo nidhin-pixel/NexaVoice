@@ -55,8 +55,11 @@ const COMPANY_PATTERNS: RegExp[] = [
   /\b([A-Za-z][\w&.-]*(?:\s+[A-Za-z][\w&.-]*){0,5}?)\s*,?\s+(?:(?:which|that)\s+)?is\s+my\s+(?:company|org(?:anization)?|business|firm|agency|studio)\b/i,
 ];
 
-const TEAM_SIZE_WORD_PATTERN =
-  /\b(?:team\s*(?:size\s*)?(?:of\s*)?|team\s+has\s+|i\s+have\s+|we\s+have\s+)([a-z]+(?:[-\s][a-z]+)?)\s*(?:people|employees|members|staff|seats|users|colleagues|devs|engineers|persons|person)?\b/i;
+const TEAM_SIZE_WORD_PATTERN_WITH_PEOPLE =
+  /\b(?:team\s*(?:size\s*)?(?:of\s*)?|team\s+has\s+|i\s+have\s+|we\s+have\s+)((?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(?:[-\s](?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred))*)\s+(?:people|employees|members|staff|seats|users|colleagues|devs|engineers|persons|person)\b/i;
+
+const TEAM_SIZE_TEAM_OF =
+  /\bteam\s*(?:size\s*)?(?:of\s+)?((?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(?:[-\s](?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred))*)\s*[.!?]*$/i;
 
 const NUMBER_WORDS: Record<string, number> = {
   zero: 0,
@@ -223,7 +226,7 @@ const REQUIREMENT_KEYWORDS: { regex: RegExp; label: string }[] = [
     label: 'Analytics & reporting',
   },
   {
-    regex: /escalat|human|handoff|transfer/i,
+    regex: /\bescalat(?:e|ion|ing)\b|(?:speak|talk|connect)\s+(?:to|with)\s+(?:a\s+)?(?:human|person|representative)|human\s+(?:expert|representative|agent|specialist|person)\b|handoff|\btransfer\b/i,
     label: 'Human escalation',
   },
   {
@@ -250,36 +253,56 @@ const REQUIREMENT_KEYWORDS: { regex: RegExp; label: string }[] = [
 
 const INTEREST_SIGNALS = {
   high: [
-    /(?:sign\s*up|start\s*(?:today|now)|onboard|implement|trial|demo|get\s*started)/i,
-    /(?:love|great|perfect|exactly|sounds\s*(?:good|great|amazing))/i,
-    /(?:budget|afford|price\s*(?:is|looks)\s*(?:fine|ok|good|reasonable)|worth)/i,
-    /(?:ready|move\s*forward|next\s*steps|proposal|quote)/i,
+    /(?:sign\s*up|start\s*(?:today|now|a\s*trial)|onboard|implement|trial|get\s*started)/i,
+    /(?:love\s+(?:it|this|that|the\s+idea)|perfect|exactly\s+what\s+(?:i|we)\s+(?:need|want))/i,
+    /(?:budget\s+(?:is\s+)?(?:fine|ok|good|approved)|price\s+(?:is|looks?)\s+(?:fine|ok|good|reasonable)|worth\s+(?:it|the))/i,
+    /(?:ready\s+to\s+(?:move|proceed|start|buy)|move\s+forward|next\s+steps|proposal|quote|order)/i,
   ],
 
   medium: [
-    /(?:interested|consider|looking\s*into|explore|evaluate)/i,
-    /(?:maybe|perhaps|might|could\s*work|seems\s*(?:good|nice))/i,
-    /(?:more\s*info|learn\s*more|tell\s*me\s*more|details)/i,
-    /(?:compare|options|plans)/i,
+    /(?:interested\s+in\s+(?:the|this|your|getting))/i,
+    /(?:looking\s*into\s+(?:this|it|the))/i,
+    /(?:explore\s+(?:this|it|further|more))/i,
+    /(?:evaluate\s+(?:this|it|the))/i,
+    /(?:more\s+(?:info|details)\s+(?:on|about|regarding))/i,
+    /(?:compare\s+(?:plans|options|pricing))/i,
   ],
 
   low: [
-    /(?:expensive|costly|too\s*much|over\s*budget|can'?t\s*afford)/i,
-    /(?:not\s*(?:sure|interested)|pass|later|maybe\s*later|not\s*now)/i,
-    /(?:just\s*looking|browsing|research)/i,
+    /(?:too\s+expensive|over\s+budget|can'?t\s*afford)/i,
+    /(?:not\s+(?:sure|interested)|pass\b|not\s+now|maybe\s*later|later\s+then)/i,
+    /(?:just\s+(?:looking|browsing|researching))/i,
   ],
 };
 
-const PLAN_MENTIONS: { regex: RegExp; plan: ProductPlanId }[] = [
-  { regex: /\bstarter\b/i, plan: 'starter' },
-  { regex: /\bbusiness\b/i, plan: 'business' },
-  { regex: /\benterprise\b/i, plan: 'enterprise' },
-];
+const PLAN_NAMES: ProductPlanId[] = ['starter', 'business', 'enterprise'];
+
+/**
+ * Only treats an explicit plan mention as plan interest — a bare word like
+ * "business" in a normal sentence must never be read as interest in a plan.
+ */
+function detectPlanMention(text: string): ProductPlanId | null {
+  for (const name of PLAN_NAMES) {
+    if (
+      new RegExp(`\\b(?:the\\s+)?${name}\\s+plan\\b`, 'i').test(text) ||
+      new RegExp(
+        `\\b(?:go with|go for|start with|sign up for|interested in|choose|upgrade to)\\s+(?:the\\s+)?${name}(?:\\s+plan)?\\b`,
+        'i',
+      ).test(text)
+    ) {
+      return name;
+    }
+  }
+  return null;
+}
 
 const ESCALATE_PATTERNS = [
-  /human|person|agent|representative|someone\s*real|talk\s*to\s*(?:a\s*)?(?:human|person|real)/i,
-  /escalat|transfer|manager|supervisor/i,
-  /speak\s*to\s*(?:a\s*)?(?:human|person|someone)/i,
+  /(?:speak|talk)\s+(?:to|with)\s+(?:a\s+)?(?:human|person|real|representative|specialist|someone)/i,
+  /(?:connect|get|put)\s+(?:me\s+)?(?:to|through\s+to)\s+(?:a\s+)?(?:human|person|representative|specialist|manager|supervisor)/i,
+  /\btransfer\s+(?:me|the\s+call)\b/i,
+  /\bescalat(?:e|ion|ing)\b/i,
+  /\b(?:human|real)\s+(?:expert|representative|person|agent|specialist)\b/i,
+  /(?:want|need)\s+(?:to\s+)?(?:speak|talk|connect)\s+(?:to|with)\s+(?:a\s+)?(?:human|person|manager)/i,
 ];
 
 export function parseCustomerMessage(
@@ -388,8 +411,13 @@ export function parseCustomerMessage(
   // "team of thirty"
   // "we have thirty employees"
   // "team has thirty people"
+  // Must require a people/member word or end-of-sentence to avoid
+  // false positives like "three months" or "we have three months of experience".
   if (!patch.teamSize) {
-    const wordMatch = normalizedText.match(TEAM_SIZE_WORD_PATTERN);
+    let wordMatch = normalizedText.match(TEAM_SIZE_WORD_PATTERN_WITH_PEOPLE);
+    if (!wordMatch) {
+      wordMatch = normalizedText.match(TEAM_SIZE_TEAM_OF);
+    }
 
     if (wordMatch?.[1]) {
       const teamSize = normalizeTeamSize(wordMatch[1]);
@@ -455,12 +483,7 @@ export function parseCustomerMessage(
   // Direct plan mentions
   // ------------------------------------------------------------
 
-  for (const { regex, plan } of PLAN_MENTIONS) {
-    if (regex.test(normalizedText)) {
-      detectedPlanInterest = plan;
-      break;
-    }
-  }
+  detectedPlanInterest = detectPlanMention(normalizedText);
 
   // ------------------------------------------------------------
   // Interest level
@@ -673,7 +696,7 @@ export function nextAction(
   }
 
   if (prospect.escalationStatus === 'requested') {
-    return 'Follow-up requested. Confirm preferred date, time, and timezone.';
+    return 'Route to human sales representative. Customer requested to speak with a human.';
   }
 
   if (leadStatus === 'qualified') {
