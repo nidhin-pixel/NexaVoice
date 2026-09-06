@@ -1,5 +1,5 @@
 import type { AgoraConfig } from '@/types/conversation';
-import type { IAgoraRTCRemoteUser } from 'agora-rtc-sdk-ng';
+import type { IAgoraRTCRemoteUser, IAgoraRTCClient } from 'agora-rtc-sdk-ng';
 
 export type RtcEventName =
   | 'user-published'
@@ -29,6 +29,8 @@ export interface IAgoraRtcClient {
   sendStreamMessage(data: string): void;
   getRemoteAudioLevel(): number;
   destroy(): void;
+  /** Exposes the underlying Agora RTC client for the Conversational AI toolkit. */
+  getRawClient?: () => IAgoraRTCClient | null;
 }
 
 /**
@@ -174,6 +176,9 @@ async function createRealRtcClient(): Promise<IAgoraRtcClient> {
     getRemoteAudioLevel() {
       return 0;
     },
+    getRawClient() {
+      return client;
+    },
     destroy() {
       handlers = {};
     },
@@ -211,6 +216,9 @@ function createStubRtcClient(): IAgoraRtcClient {
     sendStreamMessage() {},
     getRemoteAudioLevel() {
       return 0;
+    },
+    getRawClient() {
+      return null;
     },
     destroy() {
       handlers = {};

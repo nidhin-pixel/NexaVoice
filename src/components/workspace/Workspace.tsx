@@ -4,13 +4,16 @@ import { TranscriptPanel } from '@/components/workspace/TranscriptPanel';
 import { AgentPanel } from '@/components/workspace/AgentPanel';
 import { ProspectPanel } from '@/components/workspace/ProspectPanel';
 import { PostCallSummary } from '@/components/workspace/PostCallSummary';
+import type { PreCallProspect } from '@/data/precall';
 
 interface WorkspaceProps {
+  preCall?: PreCallProspect | null;
   onExit: () => void;
 }
 
-export function Workspace({ onExit }: WorkspaceProps) {
-  const conv = useVoiceConversation();
+export function Workspace({ preCall, onExit }: WorkspaceProps) {
+  const conv = (useVoiceConversation as unknown as (initial?: PreCallProspect | null) => ReturnType<typeof useVoiceConversation>)(preCall);
+
 
   // Show post-call summary when conversation has ended and we have a summary
   if (conv.status === 'ended' && conv.summary) {

@@ -6,11 +6,17 @@ import type {
   ProspectInfo,
   TranscriptEntry,
 } from '@/types/conversation';
-import { emptyProspect } from '@/types/conversation';
+import { emptyProspect, prospectFromPreCall, emptyFollowUp } from '@/types/conversation';
+import type { PreCallProspect } from '@/data/precall';
+import { applyProspectCorrections as detectCorrections } from '@/lib/conversation/corrections';
+import { handleFollowUpTurn, followUpNextAction } from '@/lib/conversation/followUp';
+import { persistConversation } from '@/lib/conversation/persist';
+import { sendFollowUpEmail } from '@/lib/email/sendFollowUpEmail';
 import { createRtcClient, type IAgoraRtcClient } from '@/lib/agora/rtcClient';
 import { createAgentClient, type IAgoraAgentClient } from '@/lib/agora/agentClient';
 import { fetchAgoraToken, isAgoraConfigured } from '@/lib/agora/config';
-import { supabase } from '@/lib/supabaseClient';
+import { startRtmSession, type RtmSession } from '@/lib/agora/rtmClient';
+import { attachConversationalToolkit } from '@/lib/agora/conversationalAi';
 import {
   parseCustomerMessage,
   recommendPlan,
@@ -29,6 +35,9 @@ import {
   resetSimCounter,
 } from '@/lib/conversation/simulation';
 
+const BYE_PATTERN =
+  /\b(bye|goodbye|bye-bye|see you|have a good day|that's all|that is all|that's everything|that will be all|no more questions|end the call|hang up)\b/i;
+
 let entryId = 0;
 let rtcUidCounter = 0;
 function genId(): string {
@@ -40,85 +49,99 @@ function generateBrowserRtcUid(): number {
   return 100000 + ((Date.now() + rtcUidCounter) % 900000);
 }
 
-function findTranscriptEvent(value: unknown): {
+function findTranscriptEvent(
+  value: unknown,
+  inheritedRole?: 'customer' | 'agent',
+): {
   text: string;
   role: 'customer' | 'agent';
   key: string;
 } | null {
-  if (!value || typeof value !== 'object') return null;
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        return findTranscriptEvent(parsed, inheritedRole);
+      }
+    } catch {
+      if (inheritedRole) {
+        return { text: trimmed, role: inheritedRole, key: `${inheritedRole}:${trimmed}` };
+      }
+    }
+    return null;
+  }
+
+  if (typeof value !== 'object') return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findTranscriptEvent(item, inheritedRole);
+      if (found) return found;
+    }
+    return null;
+  }
+
   const object = value as Record<string, unknown>;
-  const objectType = typeof object.object === 'string' ? object.object : '';
+  const objectType = typeof object.object === 'string' ? object.object : (typeof object.type === 'string' ? object.type : '');
+
   const roleText = [
     object.role,
     object.speaker,
     object.sender,
     object.participant_type,
     object.source,
+    object.from,
+    object.actor,
   ].find((entry): entry is string => typeof entry === 'string');
-  const text = [object.text, object.message, object.transcript, object.content, object.text_content]
-    .find((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-    ?.trim();
 
-  if (text && (/transcription|transcript/i.test(objectType) || roleText || object.is_customer === true || object.is_user === true)) {
-    const isCustomer =
-      object.is_customer === true ||
-      object.is_user === true ||
-      /user|customer|human|remote|caller|input/i.test(roleText ?? '') ||
-      /user\./i.test(objectType);
-    const turnId = object.turn_id ?? object.turn_seq_id;
+  const resolvedRole: 'customer' | 'agent' | undefined =
+    object.is_customer === true ||
+    object.is_user === true ||
+    (roleText && /user|customer|human|remote|caller|input|client/i.test(roleText)) ||
+    /user\.|customer\./i.test(objectType)
+      ? 'customer'
+      : object.is_agent === true ||
+        object.is_assistant === true ||
+        (roleText && /agent|assistant|bot|ai|emily|system/i.test(roleText)) ||
+        /assistant\.|agent\./i.test(objectType)
+        ? 'agent'
+        : inheritedRole;
+
+  const text = [
+    object.text,
+    object.message,
+    object.transcript,
+    object.content,
+    object.text_content,
+    object.words,
+    object.delta,
+  ].find((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)?.trim();
+
+  if (text && resolvedRole) {
+    const turnId = object.turn_id ?? object.turn_seq_id ?? object.message_id ?? object.item_id ?? object.stream_id;
+    const isFinal = object.is_final === true || object.final === true;
     const key = typeof turnId === 'string' || typeof turnId === 'number'
-      ? `${objectType}:${turnId}`
-      : `${objectType}:${text.toLowerCase()}`;
-    return { text, role: isCustomer ? 'customer' : 'agent', key };
+      ? `${resolvedRole}:${turnId}${isFinal ? ':final' : ''}`
+      : `${resolvedRole}:${text.toLowerCase()}`;
+    return { text, role: resolvedRole, key };
   }
 
-  for (const child of Object.values(object)) {
-    const nested = findTranscriptEvent(child);
-    if (nested) return nested;
+  for (const [propKey, child] of Object.entries(object)) {
+    if (child && typeof child === 'object') {
+      const childRole = resolvedRole ?? (
+        /user|customer/i.test(propKey) ? 'customer' :
+        /agent|assistant/i.test(propKey) ? 'agent' : undefined
+      );
+      const nested = findTranscriptEvent(child, childRole);
+      if (nested) return nested;
+    }
   }
+
   return null;
-}
-
-async function persistConversation(channelName: string | null, summary: ConversationSummary): Promise<void> {
-  const { data: conversation, error: conversationError } = await supabase
-    .from('conversations')
-    .insert({
-      channel_name: channelName,
-      started_at: new Date(summary.startedAt).toISOString(),
-      ended_at: new Date(summary.endedAt).toISOString(),
-      duration_seconds: summary.durationSeconds,
-      transcript: summary.transcript,
-      prospect: summary.prospect,
-      summary_text: summary.summaryText,
-      customer_requirements: summary.customerRequirements,
-      recommended_plan: summary.recommendedPlan,
-      lead_status: summary.leadStatus,
-      interest_level: summary.interestLevel,
-      estimated_deal_value: summary.estimatedDealValue,
-      next_action: summary.nextAction,
-      escalation_status: summary.escalationStatus,
-    })
-    .select('id')
-    .single();
-
-  if (conversationError) throw conversationError;
-
-  const { error: leadError } = await supabase.from('leads').insert({
-    conversation_id: conversation.id,
-    contact_name: summary.prospect.contactName,
-    company: summary.prospect.company,
-    contact_email: summary.prospect.contactEmail,
-    team_size: summary.prospect.teamSize,
-    use_case: summary.prospect.useCase,
-    requirements: summary.customerRequirements,
-    lead_status: summary.leadStatus,
-    interest_level: summary.interestLevel,
-    recommended_plan: summary.recommendedPlan,
-    estimated_deal_value: summary.estimatedDealValue,
-    escalation_status: summary.escalationStatus,
-  });
-
-  if (leadError) throw leadError;
 }
 
 export interface UseVoiceConversationReturn {
@@ -137,11 +160,23 @@ export interface UseVoiceConversationReturn {
   injectCustomerMessage: (text: string) => void;
 }
 
-export function useVoiceConversation(): UseVoiceConversationReturn {
+export function useVoiceConversation(initialProspect?: PreCallProspect | null): UseVoiceConversationReturn {
+  const createInitialProspect = useCallback((): ProspectInfo => {
+    if (!initialProspect) return emptyProspect();
+    const base = prospectFromPreCall(initialProspect);
+    const plan = recommendPlan(base);
+    if (plan) {
+      base.recommendedPlan = plan.id;
+      base.estimatedDealValue = plan.priceMonthly;
+    }
+    base.leadStatus = qualifyLead(base);
+    return base;
+  }, [initialProspect]);
+
   const [status, setStatus] = useState<ConversationStatus>('idle');
   const [agentState, setAgentState] = useState<AgentState>('idle');
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  const [prospect, setProspect] = useState<ProspectInfo>(emptyProspect());
+  const [prospect, setProspect] = useState<ProspectInfo>(createInitialProspect);
   const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<ConversationSummary | null>(null);
@@ -152,24 +187,37 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
   const processedCustomerEventsRef = useRef<Map<string, string>>(new Map());
   const rtcRef = useRef<IAgoraRtcClient | null>(null);
   const agentRef = useRef<IAgoraAgentClient | null>(null);
+  const rtmRef = useRef<RtmSession | null>(null);
+  const toolkitRef = useRef<{ unsubscribe(): void; destroy(): void } | null>(null);
+  // The RTC data-stream fallback stays active until the toolkit has actually
+  // delivered a real transcript event — a toolkit object existing is not proof
+  // that events are arriving.
+  const toolkitDeliveredRef = useRef(false);
+  const prospectRef = useRef<ProspectInfo | null>(null);
   const simTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const simIndexRef = useRef(0);
   const startedAtRef = useRef<number>(0);
   const simModeRef = useRef(false);
   const activeRef = useRef(false);
+  const hasEndedRef = useRef(false);
+  const isEndingRef = useRef(false);
+  const emailDispatchedRef = useRef(false);
   const channelRef = useRef<string | null>(null);
-  const endingPromptCountRef = useRef(0);
-  const silencePromptCountRef = useRef(0);
+  const silenceGenerationRef = useRef(0);
+  const silenceCheckCountRef = useRef(0);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const addEntry = useCallback((role: TranscriptEntry['role'], text: string, key?: string) => {
-    const entry: TranscriptEntry = { id: genId(), role, text, timestamp: Date.now() };
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const entry: TranscriptEntry = { id: genId(), role, text: trimmed, timestamp: Date.now() };
     setTranscript((prev) => {
       if (key) {
         const existingId = transcriptKeysRef.current.get(key);
         if (existingId) {
-          const next = prev.map((item) => item.id === existingId ? { ...item, text } : item);
+          const next = prev.map((item) => (item.id === existingId ? { ...item, text: trimmed } : item));
           transcriptRef.current = next;
           return next;
         }
@@ -185,8 +233,19 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
   const updateProspect = useCallback(
     (customerText: string) => {
       setProspect((prev) => {
-        const { prospectPatch, detectedPlanInterest } = parseCustomerMessage(customerText, prev);
-        const next = { ...prev, ...prospectPatch };
+        // 1. Detect customer corrections
+        const correction = detectCorrections(customerText, prev);
+        const corrected = correction?.prospectPatch ? { ...prev, ...correction.prospectPatch } : prev;
+
+        // 2. Parse customer message for requirements & plan interest
+        const { prospectPatch, detectedPlanInterest } = parseCustomerMessage(customerText, corrected);
+        let next = { ...corrected, ...prospectPatch };
+
+        // 3. Detect follow-up requests
+        const followUpResult = handleFollowUpTurn(customerText, next);
+        if (followUpResult?.prospectPatch) {
+          next = { ...next, ...followUpResult.prospectPatch };
+        }
 
         // Re-evaluate recommendation and qualification
         const plan = recommendPlan(next);
@@ -209,10 +268,270 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
     [],
   );
 
+  const endInternal = useCallback(async () => {
+    if (hasEndedRef.current) return;
+    hasEndedRef.current = true;
+    isEndingRef.current = true;
+    activeRef.current = false;
+
+    if (simTimerRef.current) {
+      clearTimeout(simTimerRef.current);
+      simTimerRef.current = null;
+    }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (endingTimerRef.current) {
+      clearTimeout(endingTimerRef.current);
+      endingTimerRef.current = null;
+    }
+
+    setAgentState('idle');
+
+    try {
+      toolkitRef.current?.destroy();
+      await agentRef.current?.stop();
+      await rtcRef.current?.leave();
+      await rtmRef.current?.logout();
+    } catch {
+      // best-effort cleanup
+    }
+
+    toolkitRef.current = null;
+    toolkitDeliveredRef.current = false;
+    rtmRef.current = null;
+    rtcRef.current?.off();
+    rtcRef.current?.destroy();
+    rtcRef.current = null;
+    agentRef.current?.off();
+    agentRef.current = null;
+
+    // Build summary & persist
+    setProspect((finalProspect) => {
+      const followUp = finalProspect.followUp ?? emptyFollowUp();
+      const leadStatus = qualifyLead(finalProspect);
+      const plan = recommendPlan(finalProspect);
+      const dealValue = estimateDealValue(finalProspect);
+      const endedAt = Date.now();
+      const generatedNextAction = followUpNextAction(followUp) ?? nextAction(finalProspect, leadStatus);
+      const hasFollowUp = Boolean(followUp.requestType && finalProspect.contactEmail?.trim());
+
+      const summary: ConversationSummary = {
+        startedAt: startedAtRef.current,
+        endedAt,
+        durationSeconds: Math.round((endedAt - startedAtRef.current) / 1000),
+        transcript: transcriptRef.current,
+        prospect: finalProspect,
+        summaryText: buildSummary(finalProspect),
+        customerRequirements: finalProspect.requirements,
+        recommendedPlan: plan?.id ?? null,
+        leadStatus,
+        interestLevel: finalProspect.interestLevel,
+        estimatedDealValue: dealValue,
+        nextAction: generatedNextAction,
+        escalationStatus: finalProspect.escalationStatus,
+        followUp,
+        persistStatus: 'failed',
+        persistError: null,
+        emailStatus: hasFollowUp ? 'sending' : 'skipped',
+        emailError: null,
+      };
+      setSummary(summary);
+
+      void persistConversation(channelRef.current, summary)
+        .then(async () => {
+          let emailStatus = summary.emailStatus;
+          let emailError: string | null = null;
+
+          if (hasFollowUp && !emailDispatchedRef.current) {
+            emailDispatchedRef.current = true;
+            try {
+              const emailResult = await sendFollowUpEmail(summary, followUp);
+              emailStatus = emailResult.status;
+              emailError = emailResult.error;
+            } catch (mailErr) {
+              emailStatus = 'failed';
+              emailError = mailErr instanceof Error ? mailErr.message : 'Failed to send confirmation email';
+            }
+          }
+
+          setSummary((current) =>
+            current
+              ? {
+                  ...current,
+                  persistStatus: 'saved',
+                  persistError: null,
+                  emailStatus,
+                  emailError,
+                }
+              : current,
+          );
+        })
+        .catch((persistError: unknown) => {
+          const errMsg = persistError instanceof Error ? persistError.message : 'Unable to save conversation lead';
+          setError(errMsg);
+          setSummary((current) =>
+            current
+              ? {
+                  ...current,
+                  persistStatus: 'failed',
+                  persistError: errMsg,
+                  emailStatus: hasFollowUp ? 'failed' : 'skipped',
+                  emailError: hasFollowUp
+                    ? 'The confirmation email was not sent because the conversation could not be saved first.'
+                    : null,
+                }
+              : current,
+          );
+        });
+
+      return finalProspect;
+    });
+
+    setStatus('ended');
+  }, []);
+
+  const cancelSilenceTimers = useCallback(() => {
+    silenceGenerationRef.current += 1;
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (endingTimerRef.current) {
+      clearTimeout(endingTimerRef.current);
+      endingTimerRef.current = null;
+    }
+  }, []);
+
+  const handleCustomerGoodbye = useCallback(() => {
+    if (hasEndedRef.current) return;
+    cancelSilenceTimers();
+    isEndingRef.current = true;
+
+    const followUp = prospectRef.current?.followUp;
+    let closingMsg = 'Thank you for your time. Have a great day!';
+    if (followUp?.requestType === 'demo') {
+      closingMsg = "Thank you for your time. I've noted your demo follow-up request. Have a wonderful day!";
+    } else if (followUp?.requestType === 'human') {
+      closingMsg = "Thank you for speaking with me. I've noted your request for our sales team to follow up. Have a great day!";
+    }
+
+    addEntry('agent', closingMsg);
+    setAgentState('speaking');
+
+    agentRef.current?.sendControl({
+      type: 'update_instructions',
+      payload: { instruction: `The customer said goodbye. Say: "${closingMsg}" and conclude.` },
+    });
+
+    endingTimerRef.current = setTimeout(() => {
+      endingTimerRef.current = null;
+      void endInternal();
+    }, 1800);
+  }, [cancelSilenceTimers, addEntry, endInternal]);
+
+  const scheduleSilenceCheck = useCallback(() => {
+    cancelSilenceTimers();
+    if (!activeRef.current || isEndingRef.current || hasEndedRef.current) return;
+
+    const currentGen = silenceGenerationRef.current;
+    silenceTimerRef.current = setTimeout(() => {
+      if (currentGen !== silenceGenerationRef.current) return;
+      if (!activeRef.current || isEndingRef.current || hasEndedRef.current) return;
+
+      if (silenceCheckCountRef.current === 0) {
+        silenceCheckCountRef.current = 1;
+        const msg = "I can't hear you. Are you there?";
+        addEntry('agent', msg);
+        setAgentState('speaking');
+
+        agentRef.current?.sendControl({
+          type: 'update_instructions',
+          payload: { instruction: 'The customer has been silent. Ask: "I can\'t hear you. Are you there?" and wait for a response.' },
+        });
+
+        silenceTimerRef.current = setTimeout(() => {
+          if (currentGen !== silenceGenerationRef.current) return;
+          if (!activeRef.current || isEndingRef.current || hasEndedRef.current) return;
+
+          silenceCheckCountRef.current = 2;
+          isEndingRef.current = true;
+          const closingMsg = "I guess you're not here. Thank you for your time.";
+          addEntry('agent', closingMsg);
+          setAgentState('speaking');
+
+          agentRef.current?.sendControl({
+            type: 'update_instructions',
+            payload: { instruction: 'The customer is still silent. Say: "I guess you\'re not here. Thank you for your time." and conclude.' },
+          });
+
+          endingTimerRef.current = setTimeout(() => {
+            if (currentGen !== silenceGenerationRef.current) return;
+            endingTimerRef.current = null;
+            void endInternal();
+          }, 2000);
+        }, 12000);
+      }
+    }, 15000);
+  }, [cancelSilenceTimers, addEntry, endInternal]);
+
+  /**
+   * Single ingestion point for live conversation events (customer + agent).
+   * Used by the Conversational AI toolkit (RTM data channel) and the RTC data
+   * stream fallback so there is exactly one transcript/prospect/silence flow.
+   */
+  const ingestTranscriptEvent = useCallback(
+    (role: TranscriptEntry['role'], text: string, key?: string) => {
+      if (role !== 'customer') {
+        addEntry('agent', text, key);
+        return;
+      }
+
+      // Temporary diagnostics for one live call.
+      console.log('[Live] customer transcript →', { text, key });
+
+      // Only a genuinely new/changed customer speech event is treated as real
+      // speech: it reconciles the transcript and resets the silence state. Replayed
+      // history items (same key + text) never reset silence or re-extract facts.
+      const isNewOrChanged =
+        !key || processedCustomerEventsRef.current.get(key) !== text;
+
+      addEntry('customer', text, key);
+      if (!isNewOrChanged) return;
+      if (key) processedCustomerEventsRef.current.set(key, text);
+
+      cancelSilenceTimers();
+      silenceCheckCountRef.current = 0;
+      isEndingRef.current = false;
+      updateProspect(text);
+      console.log('[Silence] reset — real customer speech', { text, key });
+
+      if (BYE_PATTERN.test(text)) {
+        handleCustomerGoodbye();
+        return;
+      }
+
+      scheduleSilenceCheck();
+    },
+    [cancelSilenceTimers, addEntry, updateProspect, scheduleSilenceCheck, handleCustomerGoodbye],
+  );
+
   const processCustomerMessage = useCallback(
     (text: string) => {
+      cancelSilenceTimers();
+      silenceCheckCountRef.current = 0;
+      isEndingRef.current = false;
+
       addEntry('customer', text);
       updateProspect(text);
+
+      if (BYE_PATTERN.test(text)) {
+        handleCustomerGoodbye();
+        return;
+      }
+
+      scheduleSilenceCheck();
 
       // Agent thinks then responds
       setAgentState('thinking');
@@ -233,72 +552,26 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
         });
       }, 800);
     },
-    [addEntry, updateProspect],
+    [cancelSilenceTimers, addEntry, updateProspect, handleCustomerGoodbye, scheduleSilenceCheck],
   );
 
   const handleLiveMessage = useCallback(
     (data: string) => {
+      // Fallback path: only disabled once the toolkit has actually delivered a
+      // real transcript event (keyed reconciliation prevents double-processing
+      // when both channels carry the same content).
+      if (toolkitDeliveredRef.current) return;
       try {
         const raw = JSON.parse(data) as Record<string, unknown>;
         const event = findTranscriptEvent(raw);
         if (!event) return;
-        const { text, role, key } = event;
-        if (role === 'customer') {
-          addEntry('customer', text, key);
-          if (processedCustomerEventsRef.current.get(key) === text) return;
-          processedCustomerEventsRef.current.set(key, text);
-          updateProspect(text);
-          silencePromptCountRef.current = 0;
-          if (/\b(bye|goodbye|thank you|thanks|that's all|that is all|no further questions)\b/i.test(text)) {
-            endingPromptCountRef.current += 1;
-            if (endingPromptCountRef.current <= 3) {
-              agentRef.current?.sendControl({
-                type: 'update_instructions',
-                payload: { instruction: 'Ask the customer once whether they would like to end the call.' },
-              });
-              addEntry('agent', 'Would you like to end the call?');
-            }
-            if (endingPromptCountRef.current >= 3) {
-              rtcRef.current?.muteLocalAudio();
-              setIsMuted(true);
-            } else if (!endingTimerRef.current) {
-              endingTimerRef.current = setTimeout(() => {
-                endingTimerRef.current = null;
-                endingPromptCountRef.current += 1;
-                if (endingPromptCountRef.current <= 3) {
-                  agentRef.current?.sendControl({
-                    type: 'update_instructions',
-                    payload: { instruction: 'Ask the customer once whether they would like to end the call.' },
-                  });
-                  addEntry('agent', 'Would you like to end the call?');
-                }
-                if (endingPromptCountRef.current >= 3) {
-                  rtcRef.current?.muteLocalAudio();
-                  setIsMuted(true);
-                } else {
-                  endingTimerRef.current = setTimeout(() => {
-                    endingTimerRef.current = null;
-                    endingPromptCountRef.current += 1;
-                    agentRef.current?.sendControl({
-                      type: 'update_instructions',
-                      payload: { instruction: 'Ask the customer once whether they would like to end the call.' },
-                    });
-                    addEntry('agent', 'Would you like to end the call?');
-                    rtcRef.current?.muteLocalAudio();
-                    setIsMuted(true);
-                  }, 10000);
-                }
-              }, 10000);
-            }
-          }
-        } else {
-          addEntry('agent', text, key);
-        }
+        console.log('[Stream] fallback message →', event);
+        ingestTranscriptEvent(event.role, event.text, event.key);
       } catch {
         return;
       }
     },
-    [addEntry, updateProspect],
+    [ingestTranscriptEvent],
   );
 
   const runSimulation = useCallback(() => {
@@ -306,10 +579,9 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
 
     const idx = simIndexRef.current;
     if (idx >= SIMULATION_SCRIPT.length) {
-      // Conversation complete — auto-end after a pause
       simTimerRef.current = setTimeout(() => {
         if (activeRef.current) {
-          endInternal();
+          void endInternal();
         }
       }, 4000);
       return;
@@ -323,7 +595,7 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
       processCustomerMessage(turn.customerText);
       runSimulation();
     }, turn.delayMs);
-  }, [processCustomerMessage]);
+  }, [processCustomerMessage, endInternal]);
 
   const start = useCallback(async () => {
     if (status === 'connecting' || status === 'connected') return;
@@ -335,14 +607,16 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
     transcriptRef.current = [];
     transcriptKeysRef.current.clear();
     processedCustomerEventsRef.current.clear();
-    setProspect(emptyProspect());
-    endingPromptCountRef.current = 0;
-    silencePromptCountRef.current = 0;
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (endingTimerRef.current) clearTimeout(endingTimerRef.current);
+    setProspect(createInitialProspect());
+    cancelSilenceTimers();
+    silenceCheckCountRef.current = 0;
+    toolkitDeliveredRef.current = false;
     resetSimCounter();
     entryId = 0;
     activeRef.current = true;
+    hasEndedRef.current = false;
+    isEndingRef.current = false;
+    emailDispatchedRef.current = false;
     startedAtRef.current = Date.now();
 
     const configured = isAgoraConfigured();
@@ -364,10 +638,7 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
       agent.on({
         onAgentStateChange: (state) => setAgentState(state),
         onAgentMessage: (entry) => addEntry('agent', entry.text),
-        onCustomerMessage: (entry) => {
-          addEntry('customer', entry.text);
-          updateProspect(entry.text);
-        },
+        onCustomerMessage: (entry) => ingestTranscriptEvent('customer', entry.text),
         onError: (message) => setError(message),
       });
       rtc.on({
@@ -380,10 +651,34 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
       if (!token) throw new Error('Agora is not configured');
       await rtc.join(token);
 
+      // The agent is started with data_channel "rtm" (enable_rtm), so live
+      // transcript and agent-state events are delivered over Signaling. Use the
+      // existing Conversational AI toolkit + RTM session to receive them.
+      const rtm = await startRtmSession(token.appId, String(token.uid), token.rtmToken ?? token.token, channelName);
+      rtmRef.current = rtm;
+
+      const toolkit = await attachConversationalToolkit({
+        rtcEngine: rtc.getRawClient?.() ?? null,
+        rtmEngine: rtm?.engine,
+        channelName,
+        onTranscript: (entry) => {
+          // First real event from the authoritative path disables the fallback.
+          toolkitDeliveredRef.current = true;
+          ingestTranscriptEvent(entry.role, entry.text, entry.key);
+        },
+        onAgentState: (state) => {
+          console.log('[Live] agent state →', state);
+          setAgentState(state);
+        },
+        onError: (message) => setError(message),
+      });
+      toolkitRef.current = toolkit;
+
       await agent.start();
 
       setStatus('connected');
       setAgentState('listening');
+      scheduleSilenceCheck();
 
       // The live agent owns its greeting; the local greeting is only for demo mode.
       setTimeout(() => {
@@ -391,7 +686,6 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
           addEntry('agent', greetingMessage());
           setAgentState('listening');
           simIndexRef.current = 0;
-          // Start simulation after greeting
           simTimerRef.current = setTimeout(() => {
             runSimulation();
           }, 3000);
@@ -402,68 +696,16 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
       setError(msg);
       setStatus('error');
       activeRef.current = false;
+      try {
+        await agentRef.current?.stop();
+        await rtcRef.current?.leave();
+        await rtmRef.current?.logout();
+        toolkitRef.current?.destroy();
+      } catch {
+        // Best-effort cleanup after a failed start.
+      }
     }
-  }, [status, addEntry, handleLiveMessage, runSimulation]);
-
-  const endInternal = useCallback(async () => {
-    activeRef.current = false;
-    if (simTimerRef.current) {
-      clearTimeout(simTimerRef.current);
-      simTimerRef.current = null;
-    }
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (endingTimerRef.current) clearTimeout(endingTimerRef.current);
-
-    setAgentState('idle');
-
-    try {
-      await agentRef.current?.stop();
-      await rtcRef.current?.leave();
-    } catch {
-      // best-effort cleanup
-    }
-
-    rtcRef.current?.off();
-    rtcRef.current?.destroy();
-    rtcRef.current = null;
-    agentRef.current?.off();
-    agentRef.current = null;
-
-    // Build summary
-    setProspect((finalProspect) => {
-      const leadStatus = qualifyLead(finalProspect);
-      const plan = recommendPlan(finalProspect);
-      const dealValue = estimateDealValue(finalProspect);
-      const endedAt = Date.now();
-      const summary: ConversationSummary = {
-        startedAt: startedAtRef.current,
-        endedAt,
-        durationSeconds: Math.round((endedAt - startedAtRef.current) / 1000),
-        transcript: transcriptRef.current,
-        prospect: finalProspect,
-        summaryText: buildSummary(finalProspect),
-        customerRequirements: finalProspect.requirements,
-        recommendedPlan: plan?.id ?? null,
-        leadStatus,
-        interestLevel: finalProspect.interestLevel,
-        estimatedDealValue: dealValue,
-        nextAction: nextAction(finalProspect, leadStatus),
-        escalationStatus: finalProspect.escalationStatus,
-        followUp: finalProspect.followUp,
-        persistStatus: 'failed',
-        persistError: null,
-        emailStatus: 'skipped',
-        emailError: null,
-      };
-      setSummary(summary);
-      void persistConversation(channelRef.current, summary).catch((persistError: unknown) => {
-        setError(persistError instanceof Error ? persistError.message : 'Unable to save conversation lead');
-      });
-      return finalProspect;
-    });
-
-    setStatus('ended');
-  }, []);
+  }, [status, addEntry, handleLiveMessage, runSimulation, createInitialProspect, ingestTranscriptEvent, cancelSilenceTimers, scheduleSilenceCheck]);
 
   const end = useCallback(async () => {
     await endInternal();
@@ -472,27 +714,17 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
       const next = !prev;
-      rtcRef.current?.[next ? 'muteLocalAudio' : 'unmuteLocalAudio']();
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       if (next) {
-        silencePromptCountRef.current = 0;
-        const prompt = () => {
-          if (!activeRef.current || !rtcRef.current?.isLocalAudioMuted()) return;
-          silencePromptCountRef.current += 1;
-          agentRef.current?.sendControl({
-            type: 'update_instructions',
-            payload: { instruction: 'Ask the customer if they are still present.' },
-          });
-          addEntry('agent', 'Are you still there?');
-          if (silencePromptCountRef.current < 2) {
-            silenceTimerRef.current = setTimeout(prompt, 10000);
-          }
-        };
-        silenceTimerRef.current = setTimeout(prompt, 10000);
+        rtcRef.current?.muteLocalAudio();
+        cancelSilenceTimers();
+      } else {
+        rtcRef.current?.unmuteLocalAudio();
+        silenceCheckCountRef.current = 0;
+        scheduleSilenceCheck();
       }
       return next;
     });
-  }, [addEntry]);
+  }, [cancelSilenceTimers, scheduleSilenceCheck]);
 
   const escalate = useCallback(() => {
     setProspect((prev) => ({
@@ -520,16 +752,21 @@ export function useVoiceConversation(): UseVoiceConversationReturn {
   );
 
   useEffect(() => {
+    prospectRef.current = prospect;
+  }, [prospect]);
+
+  useEffect(() => {
     return () => {
       activeRef.current = false;
+      cancelSilenceTimers();
       if (simTimerRef.current) clearTimeout(simTimerRef.current);
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      if (endingTimerRef.current) clearTimeout(endingTimerRef.current);
       rtcRef.current?.off();
       rtcRef.current?.destroy();
       agentRef.current?.off();
+      toolkitRef.current?.destroy();
+      void rtmRef.current?.logout();
     };
-  }, []);
+  }, [cancelSilenceTimers]);
 
   return {
     status,
