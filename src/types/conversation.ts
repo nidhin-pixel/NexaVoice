@@ -67,5 +67,6 @@ export interface AgoraConfig {
   appId: string;
   channelName: string;
   token: string;
+  rtmToken?: string;
   uid: number;
 }

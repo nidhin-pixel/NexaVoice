@@ -1,5 +1,4 @@
-import type { ProductPlan } from '@/data/products';
-import { PRODUCT_PLANS, formatPrice, getPlanById } from '@/data/products';
+import { PRODUCT_PLANS, formatPrice } from '@/data/products';
 import type { ProspectInfo } from '@/types/conversation';
 import { recommendPlan } from '@/lib/conversation/engine';
 
@@ -42,83 +41,71 @@ export function generateAgentResponse(
 ): string {
   switch (phase) {
     case 'escalation':
-      return handleEscalation(customerText, prospect);
+      return handleEscalation();
 
     case 'pricing_inquiry':
-      return handlePricingInquiry(customerText, prospect);
+      return handlePricingInquiry();
 
     case 'product_inquiry':
-      return handleProductInquiry(customerText, prospect);
+      return handleProductInquiry();
 
     case 'discovery':
-      return handleDiscovery(customerText, prospect);
+      return handleDiscovery(prospect);
 
     case 'recommendation':
-      return handleRecommendation(customerText, prospect);
+      return handleRecommendation(prospect);
 
     case 'qualification':
-      return handleQualification(customerText, prospect);
+      return handleQualification(prospect);
 
     case 'closing':
-      return handleClosing(customerText, prospect);
+      return handleClosing();
 
     default:
-      return handleGeneral(customerText, prospect);
+      return handleGeneral(customerText);
   }
 }
 
-function handleEscalation(_text: string, _prospect: ProspectInfo): string {
-  return "Absolutely — I understand you'd like to speak with a human team member. I'm connecting you with our sales team right now. Everything we've discussed so far will be shared with them so you don't have to repeat yourself. They'll be with you shortly.";
+function handleEscalation(): string {
+  return "Absolutely — I can help arrange the next step with a human sales specialist. I'll keep the details from this conversation available for them. What would be most useful for the specialist to know?";
 }
 
-function handlePricingInquiry(_text: string, _prospect: ProspectInfo): string {
+function handlePricingInquiry(): string {
   const lines = PRODUCT_PLANS.map(
     (p) => `${p.name} at ${formatPrice(p)} for up to ${p.maxUsers} users.`,
   );
   return `Great question. We have three plans. ${lines.join(' ')} Based on what you've told me, I can recommend the best fit once I understand your team size and use case a bit more. How many people would be using this?`;
 }
 
-function handleProductInquiry(_text: string, _prospect: ProspectInfo): string {
+function handleProductInquiry(): string {
   return "NexaVoice is a real-time AI voice sales agent. When a customer calls in, the AI has a natural two-way voice conversation — it listens, understands requirements, answers product and pricing questions, recommends the right plan, and qualifies the lead. All of that happens live, and your sales team gets a full prospect intelligence report. What's your current sales process like? Are you doing inbound, outbound, or both?";
 }
 
-function handleDiscovery(text: string, prospect: ProspectInfo): string {
-  const missing: string[] = [];
-  if (!prospect.contactName) missing.push("your name");
-  if (!prospect.company) missing.push("the name of your company");
-  if (!prospect.useCase) missing.push("what you're primarily looking to use NexaVoice for");
-  if (!prospect.teamSize) missing.push("how large your team is");
+function handleDiscovery(prospect: ProspectInfo): string {
+  if (!prospect.contactName) {
+    return "Thanks for taking the call. May I know your name?";
+  }
+  if (!prospect.company) {
+    return `Nice to meet you, ${prospect.contactName}. Which organization or company are you with?`;
+  }
+  if (!prospect.useCase) {
+    return "Thanks. What are you looking for NexaVoice to help you accomplish?";
+  }
+  if (!prospect.teamSize) {
+    return "Thanks for sharing that. Roughly how many people would be on your team using NexaVoice?";
+  }
 
-  if (missing.length === 0) {
+  if (prospect.requirements.length === 0) {
+    return "What would be most important for you in a solution — integrations, multilingual support, analytics, or something else?";
+  }
+
+  if (prospect.company && prospect.teamSize && prospect.useCase) {
     return "Thanks for sharing that. Let me make sure I've got the full picture before recommending a plan. Could you tell me a bit about what's most important to you — integrations, multilingual support, analytics, or anything else?";
   }
-
-  if (missing.length === 3) {
-    return "Welcome to NexaVoice! I'm your AI sales assistant. To get started, may I have your name and the name of your company?";
-  }
-
-  if (missing.length <= 2) {
-    if (!prospect.contactName && !prospect.company) {
-      return "Thanks for that. May I have your name and the name of your company?";
-    }
-    if (!prospect.contactName) {
-      return "Thanks. May I have your name?";
-    }
-    if (!prospect.company) {
-      return "Got it. And what's the name of your company?";
-    }
-    if (!prospect.useCase) {
-      return "Perfect. What problem are you hoping NexaVoice will solve, and what would you like the agent to handle?";
-    }
-    if (!prospect.teamSize) {
-      return "Thanks. Roughly how many people would be on your team using NexaVoice?";
-    }
-  }
-
-  return `Thanks for sharing. I'd love to understand a bit more — could you tell me about ${missing[0]}?`;
+  return "Thanks for sharing. What else would be useful for us to understand about your needs?";
 }
 
-function handleRecommendation(text: string, prospect: ProspectInfo): string {
+function handleRecommendation(prospect: ProspectInfo): string {
   const plan = recommendPlan(prospect);
   if (!plan) {
     return "Based on what you've shared, I'd like to understand your needs a bit more before recommending a plan. What features matter most to you?";
@@ -126,7 +113,7 @@ function handleRecommendation(text: string, prospect: ProspectInfo): string {
   return `Based on what you've told me — ${summarizeProspect(prospect)} — I'd recommend our ${plan.name} plan at ${formatPrice(plan)}. It supports up to ${plan.maxUsers} users and includes ${plan.features.slice(0, 2).join(', ').toLowerCase()}. Does that sound like a good fit, or would you like to compare it with other plans?`;
 }
 
-function handleQualification(text: string, prospect: ProspectInfo): string {
+function handleQualification(prospect: ProspectInfo): string {
   if (prospect.interestLevel === 'high') {
     return "That's great to hear. I think we're a strong fit for what you need. Would you like me to connect you with our sales team for next steps, or is there anything else I can answer for you right now?";
   }
@@ -136,11 +123,11 @@ function handleQualification(text: string, prospect: ProspectInfo): string {
   return "Thanks for that context. Would you like me to walk you through how the plan works in more detail, or do you have any specific questions I can answer?";
 }
 
-function handleClosing(text: string, prospect: ProspectInfo): string {
+function handleClosing(): string {
   return "Wonderful. I've captured all the details from our conversation — your company info, team size, use case, and the plan I recommended. Our sales team will follow up with you to get everything set up. Is there anything else I can help you with today?";
 }
 
-function handleGeneral(text: string, prospect: ProspectInfo): string {
+function handleGeneral(text: string): string {
   if (/thank|thanks|appreciate/i.test(text)) {
     return "You're very welcome! I'm glad I could help. Is there anything else you'd like to know about NexaVoice?";
   }
@@ -162,5 +149,5 @@ function summarizeProspect(prospect: ProspectInfo): string {
 }
 
 export function greetingMessage(): string {
-  return "Hi there, and welcome to NexaVoice! I'm your AI sales assistant. May I start with your name and the name of your company?";
+  return "Hi there, and welcome to NexaVoice! I'm your AI sales assistant. May I have your name?";
 }

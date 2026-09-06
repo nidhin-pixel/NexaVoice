@@ -31,7 +31,7 @@ export function AgentPanel({
       {/* Header */}
       <div className="w-full border-b border-white/5 px-5 py-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">AI Sales Agent</h2>
+          <h2 className="text-sm font-semibold text-white">NexaVoice</h2>
           <StatusBadge status={status} />
         </div>
       </div>

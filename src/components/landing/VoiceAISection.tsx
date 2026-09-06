@@ -81,7 +81,7 @@ export function VoiceAISection() {
               </div>
 
               <div className="text-center">
-                <div className="text-sm font-semibold text-white">AI Sales Agent</div>
+                <div className="text-sm font-semibold text-white">NexaVoice</div>
                 <div className="mt-1 text-xs text-ink-400">Listening...</div>
               </div>
 

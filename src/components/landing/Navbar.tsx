@@ -34,6 +34,7 @@ export function Navbar({ onStartConversation }: NavbarProps) {
           <a href="#how-it-works" className="text-sm text-ink-300 transition-colors hover:text-white">How It Works</a>
           <a href="#capabilities" className="text-sm text-ink-300 transition-colors hover:text-white">Capabilities</a>
           <a href="#pricing" className="text-sm text-ink-300 transition-colors hover:text-white">Pricing</a>
+          <a href="#team" className="text-sm text-ink-300 transition-colors hover:text-white">Team</a>
         </nav>
 
         <button onClick={onStartConversation} className="btn-primary text-sm">

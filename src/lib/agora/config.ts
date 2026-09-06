@@ -60,6 +60,7 @@ export async function fetchAgoraToken(channelName: string, uid: number): Promise
       appId: data.appId,
       channelName: data.channelName,
       token: data.token,
+      rtmToken: data.rtmToken ?? data.token,
       uid: data.uid ?? uid,
     };
   } catch (error) {

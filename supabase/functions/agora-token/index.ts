@@ -1,4 +1,7 @@
-import { RtcRole, RtcTokenBuilder } from "npm:agora-access-token@2.0.4";
+import {
+  RtcRole,
+  RtcTokenBuilder,
+} from "npm:agora-token@2.0.6";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,15 +20,28 @@ type RequestBody = {
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
   });
 }
 
-async function agoraRequest(path: string, init: RequestInit = {}) {
+async function agoraRequest(
+  path: string,
+  init: RequestInit = {},
+) {
   const customerId = Deno.env.get("AGORA_CUSTOMER_ID");
   const customerSecret = Deno.env.get("AGORA_CUSTOMER_SECRET");
-  if (!customerId || !customerSecret) throw new Error("Agora Customer ID/Secret are not configured");
+
+  if (!customerId || !customerSecret) {
+    throw new Error(
+      "Agora Customer ID/Secret are not configured",
+    );
+  }
+
   const auth = btoa(`${customerId}:${customerSecret}`);
+
   return fetch(`https://api.agora.io${path}`, {
     ...init,
     headers: {
@@ -37,91 +53,279 @@ async function agoraRequest(path: string, init: RequestInit = {}) {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders,
+    });
+  }
+
+  if (req.method !== "POST") {
+    return json(
+      { error: "Method not allowed" },
+      405,
+    );
+  }
 
   try {
     const body = (await req.json()) as RequestBody;
+
     const channelName = body.channelName?.trim();
-    const browserUid = body.uid ?? body.browserUid;
-    const appId = Deno.env.get("AGORA_APP_ID");
-    const certificate = Deno.env.get("AGORA_APP_CERTIFICATE");
-    if (!channelName || !appId || !certificate) {
-      return json({ error: "Agora app credentials and channelName are required" }, 503);
-    }
-    if (body.action !== "stop" && (!Number.isInteger(browserUid) || browserUid <= 0)) {
-      return json({ error: "A non-zero browser UID is required" }, 400);
+
+    const browserUid =
+      body.uid ?? body.browserUid;
+
+    const appId =
+      Deno.env.get("AGORA_APP_ID");
+
+    const certificate =
+      Deno.env.get("AGORA_APP_CERTIFICATE");
+
+    if (
+      !channelName ||
+      !appId ||
+      !certificate
+    ) {
+      return json(
+        {
+          error:
+            "Agora app credentials and channelName are required",
+        },
+        503,
+      );
     }
 
-    const configuredUid = Deno.env.get("AGORA_AGENT_UID");
-    const configuredAgentUid = configuredUid ? Number(configuredUid) : null;
-    if (configuredAgentUid !== null && (!Number.isInteger(configuredAgentUid) || configuredAgentUid <= 0)) {
-      return json({ error: "AGORA_AGENT_UID must be a positive integer" }, 503);
+    if (
+      body.action !== "stop" &&
+      (!Number.isInteger(browserUid) ||
+        browserUid <= 0)
+    ) {
+      return json(
+        {
+          error:
+            "A non-zero browser UID is required",
+        },
+        400,
+      );
     }
-    const uid = configuredAgentUid ??
-      100000 + Array.from(channelName).reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) % 900000, 0);
-    const agentUid = uid === browserUid ? (uid % 899999) + 1 : uid;
-    const expiry = Math.floor(Date.now() / 1000) + 3600;
-    const userToken = RtcTokenBuilder.buildTokenWithUid(
-      appId,
-      certificate,
-      channelName,
-      browserUid,
-      RtcRole.PUBLISHER,
-      expiry,
-    );
 
-    if (body.action === "token") return json({ appId, channelName, token: userToken, uid: browserUid });
+    const configuredUid =
+      Deno.env.get("AGORA_AGENT_UID");
 
-    if (body.action === "start") {
-      const agentToken = RtcTokenBuilder.buildTokenWithUid(
+    const configuredAgentUid =
+      configuredUid
+        ? Number(configuredUid)
+        : null;
+
+    if (
+      configuredAgentUid !== null &&
+      (!Number.isInteger(
+        configuredAgentUid,
+      ) ||
+        configuredAgentUid <= 0)
+    ) {
+      return json(
+        {
+          error:
+            "AGORA_AGENT_UID must be a positive integer",
+        },
+        503,
+      );
+    }
+
+    const uid =
+      configuredAgentUid ??
+      100000 +
+        Array.from(channelName).reduce(
+          (hash, character) =>
+            (hash * 31 +
+              character.charCodeAt(0)) %
+            900000,
+          0,
+        );
+
+    const agentUid =
+      uid === browserUid
+        ? (uid % 899999) + 1
+        : uid;
+
+    const expiry =
+      Math.floor(Date.now() / 1000) +
+      3600;
+
+    // Browser RTC + RTM token
+    const userToken =
+      RtcTokenBuilder.buildTokenWithRtm2(
         appId,
         certificate,
         channelName,
-        agentUid,
+        String(browserUid),
         RtcRole.PUBLISHER,
         expiry,
+        expiry,
+        expiry,
+        expiry,
+        expiry,
+        String(browserUid),
+        expiry,
       );
-      const response = await agoraRequest(`/api/conversational-ai-agent/v2/projects/${appId}/join`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: `${Deno.env.get("AGORA_AGENT_NAME") ?? "nexavoice"}-${Date.now()}`,
-          pipeline_id: Deno.env.get("AGORA_PIPELINE_ID"),
-          properties: {
-            channel: channelName,
-            token: agentToken,
-            agent_rtc_uid: String(agentUid),
-            remote_rtc_uids: [String(browserUid)],
-          },
-        }),
+
+    if (body.action === "token") {
+      return json({
+        appId,
+        channelName,
+        token: userToken,
+        rtmToken: userToken,
+        uid: browserUid,
+        rtmUserId: String(browserUid),
       });
-      const result = await response.json().catch(() => ({}));
+    }
+
+    if (body.action === "start") {
+      // Agent RTC + RTM token
+      const agentToken =
+        RtcTokenBuilder.buildTokenWithRtm2(
+          appId,
+          certificate,
+          channelName,
+          String(agentUid),
+          RtcRole.PUBLISHER,
+          expiry,
+          expiry,
+          expiry,
+          expiry,
+          expiry,
+          String(agentUid),
+          expiry,
+        );
+
+      const response =
+        await agoraRequest(
+          `/api/conversational-ai-agent/v2/projects/${appId}/join`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              name: `${
+                Deno.env.get(
+                  "AGORA_AGENT_NAME",
+                ) ?? "nexavoice"
+              }-${Date.now()}`,
+
+              pipeline_id:
+                Deno.env.get(
+                  "AGORA_PIPELINE_ID",
+                ),
+
+              properties: {
+                channel: channelName,
+
+                token: agentToken,
+
+                agent_rtc_uid:
+                  String(agentUid),
+
+                agent_rtm_uid:
+                  String(agentUid),
+
+                remote_rtc_uids: [
+                  String(browserUid),
+                ],
+
+                advanced_features: {
+                  enable_rtm: true,
+                },
+
+                parameters: {
+                  data_channel: "rtm",
+                },
+              },
+            }),
+          },
+        );
+
+      const result =
+        await response
+          .json()
+          .catch(() => ({}));
+
       if (!response.ok) {
         return json(
           {
-            error: "Agora agent start failed",
-            agora_status: response.status,
-            agora_message: result.message,
-            agora_code: result.code,
-            agora_error_code: result.error_code,
+            error:
+              "Agora agent start failed",
+
+            agora_status:
+              response.status,
+
+            agora_message:
+              result.message,
+
+            agora_code:
+              result.code,
+
+            agora_error_code:
+              result.error_code,
           },
           response.status,
         );
       }
-      return json({ agentId: result.agent_id ?? result.agentId });
+
+      return json({
+        agentId:
+          result.agent_id ??
+          result.agentId,
+      });
     }
 
-    if (!body.agentId) return json({ error: "agentId is required to stop an agent" }, 400);
-    const response = await agoraRequest(
-      `/api/conversational-ai-agent/v2/projects/${appId}/agents/${encodeURIComponent(body.agentId)}/leave`,
-      { method: "POST", body: JSON.stringify({}) },
-    );
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      return json({ error: result.message ?? "Agora agent stop failed" }, response.status);
+    if (!body.agentId) {
+      return json(
+        {
+          error:
+            "agentId is required to stop an agent",
+        },
+        400,
+      );
     }
-    return json({ ok: true });
+
+    const response =
+      await agoraRequest(
+        `/api/conversational-ai-agent/v2/projects/${appId}/agents/${encodeURIComponent(
+          body.agentId,
+        )}/leave`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+
+    if (!response.ok) {
+      const result =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      return json(
+        {
+          error:
+            result.message ??
+            "Agora agent stop failed",
+        },
+        response.status,
+      );
+    }
+
+    return json({
+      ok: true,
+    });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Internal server error" }, 500);
+    return json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Internal server error",
+      },
+      500,
+    );
   }
 });

@@ -74,6 +74,36 @@
   50% { transform: scaleY(1); }
 }
 
+.voice-signal {
+  stroke-dasharray: 10 16;
+  animation: signal-flow 12s linear infinite;
+}
+
+.signal-node {
+  animation: node-pulse 4s ease-in-out infinite;
+}
+
+.signal-node-delay {
+  animation-delay: 1.4s;
+}
+
+@keyframes signal-flow {
+  to { stroke-dashoffset: -260; }
+}
+
+@keyframes node-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); transform-origin: center; }
+  50% { opacity: 1; transform: scale(1.25); transform-origin: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Grid background pattern */
 .grid-pattern {
   background-image:

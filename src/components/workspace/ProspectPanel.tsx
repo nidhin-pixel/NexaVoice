@@ -72,7 +72,7 @@ export function ProspectPanel({ prospect, isConnected }: ProspectPanelProps) {
             label="Recommended Plan"
             value={
               prospect.recommendedPlan
-                ? getPlanById(prospect.recommendedPlan)?.name
+                ? getPlanById(prospect.recommendedPlan)?.name ?? null
                 : null
             }
             valueClass="text-brand-300"

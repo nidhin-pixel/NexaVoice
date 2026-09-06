@@ -50,6 +50,7 @@ export function Footer() {
             <a href="#how-it-works" className="transition-colors hover:text-white">How It Works</a>
             <a href="#capabilities" className="transition-colors hover:text-white">Capabilities</a>
             <a href="#pricing" className="transition-colors hover:text-white">Pricing</a>
+            <a href="#team" className="transition-colors hover:text-white">Team</a>
           </div>
         </div>
       </div>
