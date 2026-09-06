@@ -1,7 +1,7 @@
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, apikey",
 };
 
 type RequestBody = {
@@ -97,11 +97,19 @@ Deno.serve(async (req) => {
     });
 
     if (!response.ok) {
+      const resendError = (await response.json().catch(() => null)) as { message?: string } | null;
+      const detail =
+        typeof resendError?.message === "string" && !resendError.message.includes(apiKey)
+          ? resendError.message
+          : null;
+
       return json(
         {
           configured: true,
           sent: false,
-          error: "The email provider rejected the confirmation email.",
+          error: detail
+            ? `The email provider rejected the confirmation email: ${detail}`
+            : "The email provider rejected the confirmation email.",
         },
         502,
       );

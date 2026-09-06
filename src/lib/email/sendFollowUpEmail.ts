@@ -20,8 +20,9 @@ export async function sendFollowUpEmail(
     return { status: 'skipped', error: null };
   }
 
-  if (!summary.prospect.contactEmail) {
-    return { status: 'failed', error: 'No email address was collected, so a confirmation could not be sent.' };
+  const email = summary.prospect.contactEmail?.trim();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    return { status: 'failed', error: 'A valid email address was not collected, so a confirmation could not be sent.' };
   }
 
   const base = apiBase();
@@ -34,7 +35,7 @@ export async function sendFollowUpEmail(
       method: 'POST',
       headers: getSupabaseFunctionHeaders(),
       body: JSON.stringify({
-        to: summary.prospect.contactEmail,
+        to: email,
         name: summary.prospect.contactName,
         company: summary.prospect.company,
         requestType: followUp.requestType,
@@ -46,6 +47,7 @@ export async function sendFollowUpEmail(
 
     const body = (await response.json().catch(() => ({}))) as {
       error?: string;
+      message?: string;
       configured?: boolean;
       sent?: boolean;
     };
@@ -57,10 +59,17 @@ export async function sendFollowUpEmail(
       };
     }
 
+    if (response.status === 404) {
+      return {
+        status: 'not_configured',
+        error: 'Email service is not deployed on Supabase. The follow-up request was still recorded.',
+      };
+    }
+
     if (!response.ok || body.sent === false) {
       return {
         status: 'failed',
-        error: body.error ?? 'The confirmation email could not be sent. The follow-up request was still recorded.',
+        error: body.error ?? body.message ?? 'The confirmation email could not be sent. The follow-up request was still recorded.',
       };
     }
 

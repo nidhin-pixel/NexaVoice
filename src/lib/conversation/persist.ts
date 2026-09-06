@@ -11,23 +11,29 @@ export async function persistConversation(
 
   const followUp = summary.followUp ?? summary.prospect.followUp;
 
+  const baseConversation = {
+    channel_name: channelName,
+    started_at: new Date(summary.startedAt).toISOString(),
+    ended_at: new Date(summary.endedAt).toISOString(),
+    duration_seconds: summary.durationSeconds,
+    transcript: summary.transcript,
+    prospect: summary.prospect,
+    summary_text: summary.summaryText,
+    customer_requirements: summary.customerRequirements,
+    recommended_plan: summary.recommendedPlan,
+    lead_status: summary.leadStatus,
+    interest_level: summary.interestLevel,
+    estimated_deal_value: summary.estimatedDealValue,
+    next_action: summary.nextAction,
+    escalation_status: summary.escalationStatus,
+  };
+
+  let conversationId: string | null = null;
+
   const { data: conversation, error: conversationError } = await supabase
     .from('conversations')
     .insert({
-      channel_name: channelName,
-      started_at: new Date(summary.startedAt).toISOString(),
-      ended_at: new Date(summary.endedAt).toISOString(),
-      duration_seconds: summary.durationSeconds,
-      transcript: summary.transcript,
-      prospect: summary.prospect,
-      summary_text: summary.summaryText,
-      customer_requirements: summary.customerRequirements,
-      recommended_plan: summary.recommendedPlan,
-      lead_status: summary.leadStatus,
-      interest_level: summary.interestLevel,
-      estimated_deal_value: summary.estimatedDealValue,
-      next_action: summary.nextAction,
-      escalation_status: summary.escalationStatus,
+      ...baseConversation,
       followup_request_type: followUp.requestType,
       followup_date: followUp.preferredDate,
       followup_time: followUp.preferredTime,
@@ -38,11 +44,25 @@ export async function persistConversation(
     .single();
 
   if (conversationError) {
-    throw conversationError;
+    if (conversationError.code === 'PGRST204' && conversationError.message?.includes('followup_')) {
+      const { data: fallbackConv, error: fallbackError } = await supabase
+        .from('conversations')
+        .insert(baseConversation)
+        .select('id')
+        .single();
+      if (fallbackError) {
+        throw fallbackError;
+      }
+      conversationId = fallbackConv?.id ?? null;
+    } else {
+      throw conversationError;
+    }
+  } else {
+    conversationId = conversation.id;
   }
 
-  const { error: leadError } = await supabase.from('leads').insert({
-    conversation_id: conversation.id,
+  const baseLead = {
+    conversation_id: conversationId,
     contact_name: summary.prospect.contactName,
     company: summary.prospect.company,
     contact_email: summary.prospect.contactEmail,
@@ -55,6 +75,10 @@ export async function persistConversation(
     estimated_deal_value: summary.estimatedDealValue,
     escalation_status: summary.escalationStatus,
     next_action: summary.nextAction,
+  };
+
+  const { error: leadError } = await supabase.from('leads').insert({
+    ...baseLead,
     followup_request_type: followUp.requestType,
     followup_date: followUp.preferredDate,
     followup_time: followUp.preferredTime,
@@ -62,6 +86,13 @@ export async function persistConversation(
   });
 
   if (leadError) {
-    throw leadError;
+    if (leadError.code === 'PGRST204' && leadError.message?.includes('followup_')) {
+      const { error: fallbackLeadError } = await supabase.from('leads').insert(baseLead);
+      if (fallbackLeadError) {
+        throw fallbackLeadError;
+      }
+    } else {
+      throw leadError;
+    }
   }
 }
