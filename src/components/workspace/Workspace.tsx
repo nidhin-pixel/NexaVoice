@@ -4,24 +4,13 @@ import { TranscriptPanel } from '@/components/workspace/TranscriptPanel';
 import { AgentPanel } from '@/components/workspace/AgentPanel';
 import { ProspectPanel } from '@/components/workspace/ProspectPanel';
 import { PostCallSummary } from '@/components/workspace/PostCallSummary';
-import type { PreCallProspect } from '@/data/precall';
-import { useEffect } from 'react';
 
 interface WorkspaceProps {
-  preCall: PreCallProspect | null;
   onExit: () => void;
 }
 
-export function Workspace({ preCall, onExit }: WorkspaceProps) {
+export function Workspace({ onExit }: WorkspaceProps) {
   const conv = useVoiceConversation();
-
-  const startConversation = conv.start;
-
-  useEffect(() => {
-    if (preCall && conv.status === 'idle') {
-      void startConversation(preCall);
-    }
-  }, [conv.status, preCall, startConversation]);
 
   // Show post-call summary when conversation has ended and we have a summary
   if (conv.status === 'ended' && conv.summary) {
@@ -54,6 +43,9 @@ export function Workspace({ preCall, onExit }: WorkspaceProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          {conv.isSimMode && (
+            <span className="chip bg-warning-500/10 text-warning-400">Demo Mode</span>
+          )}
           {conv.error && (
             <span className="chip bg-error-500/10 text-error-400">{conv.error}</span>
           )}
@@ -73,9 +65,8 @@ export function Workspace({ preCall, onExit }: WorkspaceProps) {
             status={conv.status}
             agentState={conv.agentState}
             isMuted={conv.isMuted}
-            onStart={() => {
-              if (preCall) void conv.start(preCall);
-            }}
+            isSimMode={conv.isSimMode}
+            onStart={conv.start}
             onEnd={conv.end}
             onToggleMute={conv.toggleMute}
             onEscalate={conv.escalate}
