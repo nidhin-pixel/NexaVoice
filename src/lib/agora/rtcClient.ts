@@ -72,6 +72,15 @@ async function createRealRtcClient(): Promise<IAgoraRtcClient> {
 
   const { getAgoraRuntimeConfig } = await import('@/lib/agora/config');
 
+  const setParameter = Reflect.get(AgoraRTC, 'setParameter');
+  if (typeof setParameter === 'function') {
+    try {
+      setParameter.call(AgoraRTC, 'ENABLE_AUDIO_PTS_METADATA', true);
+    } catch {
+      // Optional for word-level transcript metadata.
+    }
+  }
+
   const client = AgoraRTC.createClient({
     mode: 'rtc',
     codec: 'vp8',
@@ -182,13 +191,15 @@ async function createRealRtcClient(): Promise<IAgoraRtcClient> {
         cfg.uid,
       );
 
-      const mic = await AgoraRTC.createMicrophoneAudioTrack();
-
-      localAudioTrack = mic;
-
-      muted = false;
-
-      await client.publish([mic]);
+      try {
+        const mic = await AgoraRTC.createMicrophoneAudioTrack();
+        localAudioTrack = mic;
+        muted = false;
+        await client.publish([mic]);
+      } catch (error) {
+        await client.leave().catch(() => undefined);
+        throw error;
+      }
 
       /**
        * Existing RTC data-stream support.

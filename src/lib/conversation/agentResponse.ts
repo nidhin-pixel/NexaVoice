@@ -67,7 +67,7 @@ export function generateAgentResponse(
 }
 
 function handleEscalation(): string {
-  return "Absolutely — I can help arrange the next step with a human sales specialist. I'll keep the details from this conversation available for them. What would be most useful for the specialist to know?";
+  return 'Absolutely. I can request a human sales specialist to follow up with you. What date and time would work best for you?';
 }
 
 function handlePricingInquiry(): string {
@@ -149,5 +149,5 @@ function summarizeProspect(prospect: ProspectInfo): string {
 }
 
 export function greetingMessage(): string {
-  return "Hi there, and welcome to NexaVoice! I'm your AI sales assistant. May I have your name?";
+  return "Hi, I’m Emily, NexaVoice’s AI sales assistant. How can I help today?";
 }

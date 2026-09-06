@@ -42,6 +42,14 @@ export function PostCallSummary({ summary, onNewConversation }: PostCallSummaryP
           <p className="mt-2 text-sm text-ink-400">
             Call ended · {formatDuration(summary.durationSeconds)}
           </p>
+          <p className="mt-3 text-sm text-ink-300">
+            Thanks for speaking with NexaVoice. Your conversation has been recorded.
+          </p>
+          {summary.followUp.requestType && (
+            <p className="mt-1 text-sm text-brand-300">
+              Your {summary.followUp.requestType === 'demo' ? 'demo' : 'human sales'} follow-up request was recorded.
+            </p>
+          )}
         </div>
 
         {/* Lead status banner */}
@@ -188,6 +196,25 @@ export function PostCallSummary({ summary, onNewConversation }: PostCallSummaryP
         <div className="card mt-6 p-6 animate-slide-up" style={{ animationDelay: '400ms' }}>
           <h2 className="mb-3 text-sm font-semibold text-white">Conversation Overview</h2>
           <p className="text-sm leading-relaxed text-ink-300">{summary.summaryText}</p>
+          <div className="mt-4 border-t border-white/5 pt-4 text-xs text-ink-400">
+            <div>
+              Conversation save: {summary.persistStatus === 'saved' ? 'Completed' : 'Pending or failed'}
+            </div>
+            {summary.persistError && <div className="mt-1 text-error-400">{summary.persistError}</div>}
+            {summary.followUp.requestType && (
+              <div className="mt-1">
+                Email status:{' '}
+                {summary.emailStatus === 'sent'
+                  ? 'Confirmation sent'
+                  : summary.emailStatus === 'sending'
+                    ? 'Sending confirmation'
+                    : summary.emailStatus === 'not_configured'
+                      ? 'Not configured; request was still recorded'
+                      : 'Not sent; request was still recorded'}
+              </div>
+            )}
+            {summary.emailError && <div className="mt-1 text-warning-400">{summary.emailError}</div>}
+          </div>
         </div>
 
         <div className="mt-6 animate-slide-up" style={{ animationDelay: '500ms' }}>

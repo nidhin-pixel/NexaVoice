@@ -1,4 +1,4 @@
-import { Phone, PhoneOff, Mic, MicOff, Headphones, UserCog, Database } from 'lucide-react';
+import { Phone, PhoneOff, Mic, Headphones, UserCog, Database } from 'lucide-react';
 
 const features = [
   {

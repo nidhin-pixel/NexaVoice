@@ -5,7 +5,6 @@ interface AgentPanelProps {
   status: ConversationStatus;
   agentState: AgentState;
   isMuted: boolean;
-  isSimMode: boolean;
   onStart: () => void;
   onEnd: () => void;
   onToggleMute: () => void;
@@ -16,7 +15,6 @@ export function AgentPanel({
   status,
   agentState,
   isMuted,
-  isSimMode,
   onStart,
   onEnd,
   onToggleMute,
@@ -41,7 +39,7 @@ export function AgentPanel({
         <AgentOrb agentState={agentState} isConnected={isConnected} />
 
         <div className="mt-6 text-center">
-          <div className="text-base font-semibold text-white">NexaVoice Agent</div>
+          <div className="text-base font-semibold text-white">Emily</div>
           <div className="mt-1">
             <AgentStateLabel agentState={agentState} isConnected={isConnected} isMuted={isMuted} />
           </div>
@@ -68,11 +66,6 @@ export function AgentPanel({
           )}
         </div>
 
-        {isSimMode && isConnected && (
-          <div className="mt-4 rounded-full bg-warning-500/10 px-3 py-1 text-xs text-warning-400">
-            Demo Mode — Simulated Conversation
-          </div>
-        )}
       </div>
 
       {/* Call controls */}

@@ -1,4 +1,4 @@
-import { Mic, PhoneCall, Brain, Target, BarChart3, UserPlus, Workflow, Zap } from 'lucide-react';
+import { Mic, Brain, Target, BarChart3, UserPlus, Workflow } from 'lucide-react';
 
 const capabilities = [
   {

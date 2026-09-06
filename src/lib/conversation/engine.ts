@@ -314,7 +314,7 @@ export function parseCustomerMessage(
       ? cleanCompanyCandidate(match[1])
       : null;
 
-    if (company) {
+    if (company && (!current.company || /\b(?:company|organization|org)\b/i.test(normalizedText))) {
       patch.company = company.replace(/['"]/g, '').trim();
       break;
     }
@@ -336,17 +336,14 @@ export function parseCustomerMessage(
   } else if (confirmation?.[1]) {
     candidate = confirmation[1];
     contactNameSource = 'explicit_confirmation';
-  } else if (explicitIdentity?.[1]) {
+  } else if (!current.contactName && explicitIdentity?.[1]) {
     candidate = explicitIdentity[1];
-
-    // "My name is Nidhi", "I'm Nidhi", and "This is Nidhi"
-    // are reliable identity statements, but not confirmations.
     contactNameSource = 'reliable_context';
   }
 
   const name = candidate ? cleanNameCandidate(candidate) : null;
 
-  if (name) {
+  if (name && (contactNameSource === 'explicit_correction' || !current.contactName)) {
     patch.contactName = name;
   } else {
     contactNameSource = null;
@@ -356,12 +353,9 @@ export function parseCustomerMessage(
   // Email
   // ------------------------------------------------------------
 
-  if (!current.contactEmail) {
-    const match = normalizedText.match(EMAIL_PATTERN);
-
-    if (match?.[1]) {
-      patch.contactEmail = match[1].trim();
-    }
+  const emailMatch = normalizedText.match(EMAIL_PATTERN);
+  if (emailMatch?.[1] && (!current.contactEmail || /\b(?:email|correct).*@/.test(normalizedText))) {
+    patch.contactEmail = emailMatch[1].trim();
   }
 
   // ------------------------------------------------------------
@@ -524,10 +518,22 @@ function detectInterest(
   return best;
 }
 
+function teamSizeHint(value: string | null): number {
+  if (!value) return 0;
+  const numbers = value.match(/\d+/g)?.map(Number) ?? [];
+  if (value.includes('+') && numbers.length) {
+    return numbers[0] + 1;
+  }
+  if (numbers.length >= 2) {
+    return numbers[1];
+  }
+  return numbers[0] ?? 0;
+}
+
 export function recommendPlan(
   prospect: ProspectInfo,
 ): ProductPlan | null {
-  const teamSize = parseInt(prospect.teamSize ?? '0', 10);
+  const teamSize = teamSizeHint(prospect.teamSize);
 
   // Team-size based recommendation is authoritative.
   if (teamSize > 0) {
@@ -621,6 +627,10 @@ export function buildSummary(
 ): string {
   const parts: string[] = [];
 
+  if (prospect.contactName) {
+    parts.push(`Contact: ${prospect.contactName}`);
+  }
+
   if (prospect.company) {
     parts.push(`Company: ${prospect.company}`);
   }
@@ -654,8 +664,16 @@ export function nextAction(
   prospect: ProspectInfo,
   leadStatus: LeadStatus,
 ): string {
+  if (prospect.followUp?.requestType) {
+    const kind = prospect.followUp.requestType === 'demo' ? 'Demo' : 'Human sales';
+    if (prospect.followUp.preferredDate && prospect.followUp.preferredTime) {
+      return `${kind} follow-up requested for ${prospect.followUp.preferredDate} at ${prospect.followUp.preferredTime}${prospect.followUp.timezone ? ` (${prospect.followUp.timezone})` : ''}. This is a recorded request, not a confirmed booking.`;
+    }
+    return `${kind} follow-up requested. Confirm preferred date, time, and timezone.`;
+  }
+
   if (prospect.escalationStatus === 'requested') {
-    return 'Route to human sales rep for escalation';
+    return 'Follow-up requested. Confirm preferred date, time, and timezone.';
   }
 
   if (leadStatus === 'qualified') {
